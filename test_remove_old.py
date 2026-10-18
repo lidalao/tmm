@@ -8,8 +8,6 @@ import tempfile
 import unittest
 
 SOURCE = Path(__file__).resolve().parent
-if not (SOURCE / 'remove-old.sh').exists():
-    SOURCE = SOURCE.parent / 'simple'
 
 FAKE_COMMAND = r'''#!/usr/bin/env python3
 import hashlib,json,os,sys
