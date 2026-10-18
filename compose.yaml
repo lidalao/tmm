@@ -1,0 +1,42 @@
+name: ${COMPOSE_PROJECT_NAME:-tm-stack}
+
+services:
+  tm:
+    image: ${TM_IMAGE:-traffmonetizer/cli_v2:latest}
+    container_name: ${TM_CONTAINER_NAME:-tm}
+    # tmm explicitly starts this service after obtaining a valid Token.
+    profiles: [managed]
+    restart: unless-stopped
+    user: ${TM_USER:-0}
+    command: [start, accept, --token, "${TM_TOKEN:-}", --device-name, "${TM_DEVICE_NAME:-tm}"]
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+
+  tmm:
+    build: .
+    restart: unless-stopped
+    environment:
+      TM_TOKEN_URL: ${TM_TOKEN_URL:?请在 .env 中填写 Token 文件的 HTTPS 地址}
+      TM_CHECK_INTERVAL: ${TM_CHECK_INTERVAL:-86400}
+      TM_RETRY_INTERVAL: ${TM_RETRY_INTERVAL:-300}
+      TM_START_GRACE: ${TM_START_GRACE:-10}
+      TM_IMAGE: ${TM_IMAGE:-traffmonetizer/cli_v2:latest}
+      TM_USER: ${TM_USER:-0}
+      TM_DEVICE_NAME: ${TM_DEVICE_NAME:-tm}
+      TM_CONTAINER_NAME: ${TM_CONTAINER_NAME:-tm}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-tm-stack}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./compose.yaml:/project/compose.yaml:ro
+      - tmm-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+
+volumes:
+  tmm-data:
