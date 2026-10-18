@@ -2,6 +2,8 @@
 
 `tm` 运行官方 TraffMonetizer 镜像；`tmm` 定时读取 GitHub Raw 上的明文 Token，变化时重建 TM，确认容器启动后保存新 Token。默认每天检查一次，无需 Worker、D1、WebSocket 或节点注册。
 
+默认容器名称为 `tm` 和 `tmm`，在 `docker ps` 中直接显示这两个名称。
+
 ## 旧 VPS 切换：两条命令
 
 在目标 Linux VPS 上解压整个部署包，进入含有 `compose.yaml` 的目录，以 root 执行：

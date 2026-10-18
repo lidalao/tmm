@@ -17,6 +17,7 @@ services:
 
   tmm:
     build: .
+    container_name: tmm
     restart: unless-stopped
     environment:
       TM_TOKEN_URL: ${TM_TOKEN_URL:?请在 .env 中填写 Token 文件的 HTTPS 地址}
