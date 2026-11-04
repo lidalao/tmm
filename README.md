@@ -4,9 +4,37 @@
 
 默认容器名称为 `tm` 和 `tmm`，在 `docker ps` 中直接显示这两个名称。
 
-## 旧 VPS 切换：两条命令
+## 从 GitHub 下载并迁移旧 VPS（完整命令）
 
-在目标 Linux VPS 上解压整个部署包，进入含有 `compose.yaml` 的目录，以 root 执行：
+以下整段直接复制到**尚未迁移的 Linux VPS 的 root 终端**，不要在本地电脑执行。地址已填写，无需修改：
+
+```bash
+bash <<'TMM_MIGRATE'
+set -euo pipefail
+
+if [ "$(id -u)" != 0 ]; then
+  echo "请先进入 root 终端，再执行本段命令。"
+  exit 1
+fi
+
+cd /root
+curl --fail --location --retry 3 \
+  --header 'Cache-Control: no-cache' \
+  https://raw.githubusercontent.com/lidalao/tmm/main/tmm-migration.zip \
+  --output tmm-migration.zip
+
+python3 -m zipfile -e tmm-migration.zip /root
+cd /root/tmm
+
+bash remove-old.sh
+docker compose up -d
+
+docker compose logs --tail=30 tmm
+docker compose --profile managed ps -a
+TMM_MIGRATE
+```
+
+如果已经下载并解压了部署包，首次切换的核心操作就是：
 
 ```bash
 bash remove-old.sh
@@ -82,6 +110,79 @@ docker compose --profile managed down
 以后直接修改 GitHub 仓库根目录 `token.txt` 并提交到 `main`，所有 VPS 在下次检查时自动跟随。修改 `TM_CHECK_INTERVAL=3600` 可改为每小时检查一次。不要再使用旧 `./tmctl update`。
 
 数据保存在项目的 `tmm-data` 命名卷中，`/data/applied.json` 权限为 `600`；TMM 容器更新或 VPS 重启后保留。停止整个项目要带 `--profile managed`，否则默认只移除 TMM。`down -v` 会删除本地 Token 状态。
+
+## 官方 TM 镜像更新
+
+### 当前行为
+
+当前 TMM **只自动同步 Token，不自动跟随官方镜像更新**。迁移时通常将正在使用的官方镜像保存为 `tmm-tm:local`，以保留每台 VPS 的架构和已安装版本；因此直接 `docker compose pull tm` 会尝试拉取这个本地标签，不能完成官方升级。TMM 平时使用 `--pull missing`，Token 变化也不会主动下载新版。
+
+### 简单方案：手动拉取官方镜像，由 TMM 重建
+
+在**已完成新 Compose 部署的 VPS 的 root 终端**执行下面整段。它会按当前 TM 镜像的架构选择官方标签，保留旧镜像为 `tmm-tm:previous`，更新 TMM 实际使用的镜像标签，然后重启 TMM。TMM 会从自己的数据卷读取已保存的 Token，并通过 Compose 重建 TM；不需要再次输入 Token，也不需要执行移除脚本。
+
+```bash
+bash <<'UPDATE_TM_IMAGE'
+set -euo pipefail
+cd /root/tmm
+
+image_ref=$(docker exec tmm printenv TM_IMAGE)
+case "$image_ref" in
+  sha256:*|*@sha256:*)
+    echo "当前配置固定了镜像摘要，请先将 TM_IMAGE 改成可更新的镜像标签。"
+    exit 1
+    ;;
+esac
+
+old_id=$(docker inspect --format '{{.Image}}' tm)
+architecture=$(docker image inspect --format '{{.Architecture}}' "$old_id")
+case "$architecture" in
+  amd64) official=traffmonetizer/cli_v2:latest ;;
+  arm64) official=traffmonetizer/cli_v2:arm64v8 ;;
+  arm) official=traffmonetizer/cli_v2:arm32v7 ;;
+  *) echo "不支持当前 TM 镜像架构：$architecture"; exit 1 ;;
+esac
+
+docker pull "$official"
+new_id=$(docker image inspect --format '{{.Id}}' "$official")
+
+if [ "$old_id" = "$new_id" ]; then
+  echo "当前 TM 已是该官方标签的最新镜像，无需重建。"
+  exit 0
+fi
+
+docker tag "$old_id" tmm-tm:previous
+docker tag "$new_id" "$image_ref"
+docker compose restart tmm
+echo "已触发镜像更新。请等待启动检查完成，再查看下方日志与容器状态。"
+docker compose logs --tail=30 tmm
+docker compose --profile managed ps -a
+UPDATE_TM_IMAGE
+```
+
+这里重启的是 TMM。TMM 启动时的恢复流程会调用 Compose，Compose 检测到镜像 ID 变化后重建 TM，并带上已保存的 Token。不要直接执行 `docker compose up tm`，也不要认为单纯 `docker restart tm` 能换成新镜像。[Docker 文档](https://docs.docker.com/reference/cli/docker/compose/up/)
+
+拉取失败时，上面的脚本会停止，现有 TM 不会因此停止。新镜像已经应用后，TMM 不会自动恢复旧镜像；需要回退时，在同一个目录执行：
+
+```bash
+bash <<'ROLLBACK_TM_IMAGE'
+set -euo pipefail
+cd /root/tmm
+image_ref=$(docker exec tmm printenv TM_IMAGE)
+docker image inspect tmm-tm:previous >/dev/null
+docker tag tmm-tm:previous "$image_ref"
+docker compose restart tmm
+docker compose logs --tail=30 tmm
+ROLLBACK_TM_IMAGE
+```
+
+`tmm-tm:previous` 只保留最近一次手动更新前的镜像；不要在新版本尚未确认正常时反复执行升级命令，否则会覆盖这个备份标签。镜像启动和 TM 账号认证仍需分别确认。
+
+### 多台 VPS 后续自动更新的建议
+
+如果希望二十多台 VPS 不用逐台执行命令，最简单的扩展是**让现有 TMM 在每日检查时顺便拉取对应架构的官方镜像，比较镜像 ID；只有 Token 或镜像发生变化才重建 TM**。仍保持 TM/TMM 两个容器，不需要增加 Watchtower 或云端控制面。自动镜像升级需要额外保存旧镜像 ID 来支持真正的镜像回退。
+
+这是一项后续功能建议，当前版本尚未实现自动镜像升级；本节手动命令适用于当前版本。
 
 ## 更新及失败处理
 
