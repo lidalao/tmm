@@ -10,9 +10,23 @@ current_id=未知
 container_state=未知
 health=未知
 tm_name=tm
+command -v python3 >/dev/null || {
+  echo "缺少 python3，尚未执行更新；请先安装 python3。"
+  exit 1
+}
 summary() {
   local snapshot
-  snapshot=$(docker inspect --format '{{.Id}}|{{.Image}}|{{.State.Status}}|{{.RestartCount}}|{{.State.StartedAt}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$tm_name" 2>/dev/null) || snapshot='未知|未知|不存在或无法读取|0|未知|未知'
+  # Health is optional in Docker inspect; parse JSON without evaluating missing
+  # fields in a Go template (which can make the entire inspection fail).
+  snapshot=$(docker inspect --format '{{json .}}' "$tm_name" 2>/dev/null | python3 -c '
+import json, sys
+c = json.load(sys.stdin)
+s = c["State"]
+h = s.get("Health")
+health = h.get("Status", "unknown") if isinstance(h, dict) else "none"
+print("|".join(str(v) for v in (c["Id"], c["Image"], s["Status"],
+      c["RestartCount"], s["StartedAt"], health)))
+' 2>/dev/null) || snapshot='未知|未知|状态读取失败|0|未知|未知'
   IFS='|' read -r container_id current_id container_state restarts started health <<< "$snapshot"
 }
 report() {

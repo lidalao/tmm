@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 FAKE = '''#!/usr/bin/env python3
-import os,sys
+import os,sys,json
 from pathlib import Path
 a=sys.argv[1:]; mode=os.environ['UPDATE_CASE']
 if a[0]=='pull' and mode=='pull_fail': sys.exit(1)
@@ -25,7 +25,15 @@ elif a[0]=='inspect':
         state='exited' if mode=='exited' else 'running'
         health='unhealthy' if mode=='unhealthy' else 'none'
         restart=n if mode=='restarts' else 0
-        print(f'container|{image}|{state}|{restart}|started|{health}')
+        if mode=='inspect_fail': sys.exit(1)
+        # A real inspect object omits State.Health when no health check exists.
+        status={'Status':state, 'StartedAt':'started'}
+        if mode=='unhealthy': status['Health']={'Status':health}
+        obj={'Id':'container', 'Image':image, 'State':status, 'RestartCount':restart}
+        if a[2]=='{{json .}}': print(json.dumps(obj))
+        elif '.State.Health' in a[2] and 'Health' not in status:
+            sys.exit(1)
+        else: print(f'container|{image}|{state}|{restart}|started|{health}')
 elif a[:2]==['image','inspect']:
     print('amd64' if a[3]=='{{.Architecture}}' else 'sha256:new')
 '''
@@ -60,7 +68,7 @@ class UpdateTests(unittest.TestCase):
                 self.assertNotIn('更新结果：成功', result.stdout)
 
     def test_wrong_image_exit_health_or_restart_loop_never_report_success(self):
-        for case in ('wrong_image','exited','unhealthy','restarts','pull_fail'):
+        for case in ('wrong_image','exited','unhealthy','restarts','pull_fail','inspect_fail'):
             with self.subTest(case=case):
                 result=self.execute(case)
                 self.assertNotEqual(result.returncode,0)
