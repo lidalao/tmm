@@ -2,6 +2,8 @@
 # Run once as root from the extracted bundle, then: docker compose up -d
 set -euo pipefail
 umask 077
+mode=${1:-migrate}
+case "$mode" in migrate|--fresh-install) ;; *) echo "未知安装参数"; exit 1 ;; esac
 trap 'echo "执行失败，脚本已停止。请先处理上方错误，再继续。" >&2' ERR
 
 if [ "$(id -u)" != 0 ]; then
@@ -18,7 +20,11 @@ for old_dir in /opt/tm-manage /etc/tm-manage /var/lib/tm-manage /etc/systemd/sys
   esac
 done
 
-echo "正在准备新方案。检查和构建成功后，才会永久删除旧 Agent 与旧 TM 容器。"
+if [ "$mode" = --fresh-install ]; then
+  echo "正在准备全新安装，不执行旧 Agent 或容器移除。"
+else
+  echo "正在准备新方案。检查和构建成功后，才会永久删除旧 Agent 与旧 TM 容器。"
+fi
 if ! command -v curl >/dev/null || ! command -v python3 >/dev/null; then
   if command -v apt-get >/dev/null; then
     apt-get update
@@ -32,7 +38,7 @@ if ! command -v curl >/dev/null || ! command -v python3 >/dev/null; then
   fi
 fi
 python3 -c 'import sys; assert sys.version_info >= (3, 8), "需要 Python 3.8 或更新版本"'
-command -v systemctl >/dev/null
+if [ "$mode" = migrate ]; then command -v systemctl >/dev/null; fi
 docker info >/dev/null
 
 case "$(uname -m)" in
@@ -82,13 +88,25 @@ fi
 docker compose version
 docker buildx version
 
+if [ "$mode" = --fresh-install ]; then
+  python3 prepare-migration.py check-fresh
+fi
+
 # Generate .env only once. Existing user configuration is never overwritten.
 python3 prepare-migration.py configure
 docker compose --profile managed config --format json > "$work/compose.json"
 python3 prepare-migration.py check "$work/compose.json"
 
-echo "正在构建新 TMM 镜像，旧服务此时继续运行……"
+echo "正在构建 TMM 镜像……"
 docker compose build tmm
+if [ "$mode" = --fresh-install ]; then
+  echo "正在拉取当前官方 TM 镜像……"
+  docker compose pull tm
+  docker compose up -d
+  echo "安装已启动，TMM 获取 Token 后会创建 tm。"
+  echo "查看状态：docker ps；查看日志：docker logs --tail=30 tmm"
+  exit 0
+fi
 python3 - "$work/compose.json" <<'PY'
 import json
 import subprocess

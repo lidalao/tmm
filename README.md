@@ -4,6 +4,27 @@
 
 默认容器名称为 `tm` 和 `tmm`，在 `docker ps` 中直接显示这两个名称。
 
+## 全新 VPS 安装
+
+用于尚未部署 TM/TMM 的 Linux AMD64/ARM64 VPS。先安装并启动 Docker，然后在 **VPS 的 root 终端**执行（任意目录）：
+
+```bash
+curl -fL -H 'Cache-Control: no-cache' https://raw.githubusercontent.com/lidalao/tmm/main/install.sh -o install-tmm.sh && bash install-tmm.sh
+```
+
+`install.sh` 下载最新部署包到 `/root/tmm`，按需安装 Python 3、Compose 和 Buildx，自动按架构生成 `.env`，构建 TMM，**安装时强制拉取最新官方 TM 镜像**，然后启动服务。初始 Token 来自本仓库的 `token.txt`。下载入口需要 curl；缺少时请先通过系统包管理器安装 curl。
+
+已有 `/root/tmm` 或 TM/TMM 容器时脚本会拒绝全新安装，不覆盖部署，不移除旧 Agent 或容器；已有旧方案请使用下方迁移流程。Docker Engine 不由脚本安装。
+
+查看启动结果：
+
+```bash
+docker ps
+docker logs --tail=30 tmm
+```
+
+TMM 获取 Token 后才创建 `tm`，首次启动可能需要稍等。之后只自动同步 Token，**不自动更新镜像**；需要更新官方镜像时手动执行 `update-tm.sh`。
+
 ## 从 GitHub 下载并迁移旧 VPS（完整命令）
 
 以下整段直接复制到**尚未迁移的 Linux VPS 的 root 终端**，不要在本地电脑执行。地址已填写，无需修改：
@@ -176,7 +197,7 @@ TMM 挂载 Docker socket，具有宿主机 Docker 管理权限，不开放管理
 
 ```bash
 python3 -m unittest -v test_tmm test_remove_old test_update_tm
-bash -n remove-old.sh update-tm.sh
+bash -n install.sh remove-old.sh update-tm.sh
 docker compose --env-file .env.example config --quiet
 ```
 

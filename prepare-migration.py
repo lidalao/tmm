@@ -88,7 +88,15 @@ def check(config_path):
 
 def main():
     action = sys.argv[1]
-    if action == 'configure':
+    if action == 'check-fresh':
+        names = docker('container', 'ls', '-a', '--format', '{{.Names}}').splitlines()
+        if any(name in ('tm', 'tmm', 'tm-before-tmm') or name.startswith('tm-rollback-') for name in names):
+            raise ValueError('已有 TM/TMM 容器，请使用迁移或更新流程，未执行全新安装')
+        if docker('container', 'ls', '-a', '-q', '--filter', 'label=com.docker.compose.service=tmm').strip():
+            raise ValueError('已有 TMM 服务，请使用更新脚本')
+        if Path('.env').exists():
+            raise ValueError('已有 .env 配置，全新安装不覆盖现有配置')
+    elif action == 'configure':
         configure()
     elif action == 'check':
         check(sys.argv[2])

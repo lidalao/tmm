@@ -40,6 +40,8 @@ elif tool=='docker':
     elif a[:2]==['buildx','version']: out='v0.10.0' if s.get('outdated') else 'github.com/docker/buildx v0.26.1'
     elif a[:3]==['compose','build','tmm']:
         code=1 if s.get('build_fail') else 0
+    elif a[:3]==['compose','pull','tm']:
+        code=1 if s.get('pull_fail') else 0
     elif a[0]=='compose' and '--format' in a:
         out=json.dumps({'name':'tm-stack','services':{
             'tm':{'image':'tmm-tm:local'},
@@ -101,12 +103,36 @@ def fetch_token(url):
         self.env = dict(os.environ, PATH=str(commands)+os.pathsep+os.environ['PATH'],
                         TMM_FIXTURE_STATE=str(self.state_path), DOCKER_CONFIG=str(self.root / 'docker-config'))
 
-    def execute(self):
+    def execute(self, *args):
         self.state_path.write_text(json.dumps(self.state))
-        result = subprocess.run(['bash', str(self.bundle / 'remove-old.sh')],
+        result = subprocess.run(['bash', str(self.bundle / 'remove-old.sh'), *args],
                                 env=self.env, capture_output=True, text=True, timeout=20)
         self.state = json.loads(self.state_path.read_text())
         return result
+
+    def test_fresh_install_pulls_even_with_cached_image_without_cleanup(self):
+        self.state['containers'] = {'unrelated-app': {}}
+        result = self.execute('--fresh-install')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        ops = self.state['ops']
+        self.assertLess(ops.index(['docker', 'compose', 'pull', 'tm']),
+                        ops.index(['docker', 'compose', 'up', '-d']))
+        self.assertFalse(any(op[0] == 'systemctl' for op in ops))
+        self.assertTrue(self.unit.exists())
+        self.assertTrue(all(path.exists() for path in self.paths))
+        tag = 'arm64v8' if os.uname().machine in ('aarch64', 'arm64') else 'latest'
+        self.assertIn('traffmonetizer/cli_v2:' + tag, (self.bundle / '.env').read_text())
+
+    def test_fresh_install_refuses_existing_tm(self):
+        self.assertNotEqual(self.execute('--fresh-install').returncode, 0)
+        self.assertIn('tm', self.state['containers'])
+        self.assertTrue(self.unit.exists())
+
+    def test_fresh_pull_failure_does_not_start_or_remove(self):
+        self.state.update(containers={'unrelated-app': {}}, pull_fail=True)
+        self.assertNotEqual(self.execute('--fresh-install').returncode, 0)
+        self.assertNotIn(['docker', 'compose', 'up', '-d'], self.state['ops'])
+        self.assertTrue(self.unit.exists())
 
     def test_removes_only_old_agent_and_tm_after_build_and_stop(self):
         result = self.execute()
