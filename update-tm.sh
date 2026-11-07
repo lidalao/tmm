@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Update the official TM image, preserving the Token managed by TMM.
 set -euo pipefail
-cd /root/tmm
 
 official=未获取
 new_id=未获取
@@ -47,16 +46,21 @@ stable_seconds=${TM_UPDATE_STABLE_SECONDS:-10}
   echo "等待时间和观察时间必须是正整数秒。"; exit 1;
 }
 
-# Compose service names remain stable even when older containers have generated names.
-manager_id=$(docker compose ps -a -q tmm)
+# Discover by service label, independent of installation directory or name.
+manager_id=$(docker ps -a -q --filter label=com.docker.compose.service=tmm)
+if [[ "$manager_id" == *$'\n'* ]]; then
+  echo "找到多个 TMM 容器，无法确定更新目标，尚未执行更新。"
+  echo "请执行 docker ps -a --filter label=com.docker.compose.service=tmm 检查。"
+  exit 1
+fi
 if [ -z "$manager_id" ]; then
-  echo "未找到当前 Compose 项目的 TMM 服务，尚未执行镜像更新。"
-  echo "请在 /root/tmm 执行 docker compose ps -a 检查部署状态。"
+  echo "未找到 TMM 服务容器，尚未执行镜像更新。"
+  echo "请执行 docker ps -a 检查部署状态。"
   exit 1
 fi
 if [ "$(docker inspect --format '{{.State.Running}}' "$manager_id")" != true ]; then
   echo "TMM 服务未运行，尚未执行镜像更新。"
-  echo "请先执行 docker compose start tmm，再重新运行本脚本。"
+  echo "请先执行 docker start $manager_id，再重新运行本脚本。"
   exit 1
 fi
 image_ref=$(docker exec "$manager_id" printenv TM_IMAGE)
@@ -89,7 +93,7 @@ if [ "$old_id" != "$new_id" ]; then
   changed=true
   docker tag "$old_id" tmm-tm:previous
   docker tag "$new_id" "$image_ref"
-  docker compose restart tmm
+  docker restart "$manager_id"
 fi
 
 echo "正在核对实际镜像并观察容器运行状态（最多 $wait_timeout 秒）……"
@@ -120,6 +124,6 @@ while [ "$SECONDS" -lt "$deadline" ]; do
 done
 summary
 report "失败或超时，未确认目标镜像持续正常运行"
-echo "排查命令：docker compose logs --tail=50 tmm"
+echo "排查命令：docker logs --tail=50 $manager_id"
 echo "如需恢复旧镜像，请按 README 的镜像回退步骤操作。"
 exit 1
