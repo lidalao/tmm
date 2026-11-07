@@ -121,44 +121,18 @@ docker compose --profile managed down
 
 在**已完成新 Compose 部署的 VPS 的 root 终端**执行下面整段。它会按当前 TM 镜像的架构选择官方标签，保留旧镜像为 `tmm-tm:previous`，更新 TMM 实际使用的镜像标签，然后重启 TMM。TMM 会从自己的数据卷读取已保存的 Token，并通过 Compose 重建 TM；不需要再次输入 Token，也不需要执行移除脚本。
 
+脚本已保存在仓库根目录 `update-tm.sh`。每台 VPS 复制执行：
+
 ```bash
-bash <<'UPDATE_TM_IMAGE'
-set -euo pipefail
-cd /root/tmm
-
-image_ref=$(docker exec tmm printenv TM_IMAGE)
-case "$image_ref" in
-  sha256:*|*@sha256:*)
-    echo "当前配置固定了镜像摘要，请先将 TM_IMAGE 改成可更新的镜像标签。"
-    exit 1
-    ;;
-esac
-
-old_id=$(docker inspect --format '{{.Image}}' tm)
-architecture=$(docker image inspect --format '{{.Architecture}}' "$old_id")
-case "$architecture" in
-  amd64) official=traffmonetizer/cli_v2:latest ;;
-  arm64) official=traffmonetizer/cli_v2:arm64v8 ;;
-  arm) official=traffmonetizer/cli_v2:arm32v7 ;;
-  *) echo "不支持当前 TM 镜像架构：$architecture"; exit 1 ;;
-esac
-
-docker pull "$official"
-new_id=$(docker image inspect --format '{{.Id}}' "$official")
-
-if [ "$old_id" = "$new_id" ]; then
-  echo "当前 TM 已是该官方标签的最新镜像，无需重建。"
-  exit 0
-fi
-
-docker tag "$old_id" tmm-tm:previous
-docker tag "$new_id" "$image_ref"
-docker compose restart tmm
-echo "已触发镜像更新。请等待启动检查完成，再查看下方日志与容器状态。"
-docker compose logs --tail=30 tmm
-docker compose --profile managed ps -a
-UPDATE_TM_IMAGE
+cd /root/tmm && \
+curl --fail --location --retry 3 \
+  --header 'Cache-Control: no-cache' \
+  https://raw.githubusercontent.com/lidalao/tmm/main/update-tm.sh \
+  --output update-tm.sh && \
+bash update-tm.sh
 ```
+
+以后再次更新时，重新执行这段命令即可。下载失败不会执行脚本。该脚本更新官方 TM 镜像，不重新安装 Agent，也不升级 TMM 程序本身。
 
 这里重启的是 TMM。TMM 启动时的恢复流程会调用 Compose，Compose 检测到镜像 ID 变化后重建 TM，并带上已保存的 Token。不要直接执行 `docker compose up tm`，也不要认为单纯 `docker restart tm` 能换成新镜像。[Docker 文档](https://docs.docker.com/reference/cli/docker/compose/up/)
 
@@ -200,7 +174,7 @@ TMM 挂载 Docker socket，具有宿主机 Docker 管理权限，不开放管理
 
 ```bash
 python3 -m unittest -v test_tmm test_remove_old
-bash -n remove-old.sh
+bash -n remove-old.sh update-tm.sh
 docker compose --env-file .env.example config --quiet
 ```
 
