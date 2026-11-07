@@ -134,6 +134,10 @@ bash update-tm.sh
 
 以后再次更新时，重新执行这段命令即可。下载失败不会执行脚本。该脚本更新官方 TM 镜像，不重新安装 Agent，也不升级 TMM 程序本身。
 
+脚本执行后默认等待最多 120 秒，核对 TM 容器实际使用的镜像 ID 是否等于本次从官方拉取的镜像 ID，并确认同一个容器连续运行 10 秒、期间没有重启。有 Docker 健康检查时，还必须达到 healthy。成功后显示“更新成功”或“已是最新镜像”，并列出官方镜像、本地标签、目标和当前镜像 ID、容器状态及重启次数。失败或超时返回非零退出码，不会把“已经触发更新”当成成功。
+
+可用 `TM_UPDATE_TIMEOUT=180 TM_UPDATE_STABLE_SECONDS=15 bash update-tm.sh` 调整等待时间和连续观察时间。这是执行当时的镜像及运行状态验证，不代表 TM 账号认证成功，也不保证容器以后不会退出。
+
 这里重启的是 TMM。TMM 启动时的恢复流程会调用 Compose，Compose 检测到镜像 ID 变化后重建 TM，并带上已保存的 Token。不要直接执行 `docker compose up tm`，也不要认为单纯 `docker restart tm` 能换成新镜像。[Docker 文档](https://docs.docker.com/reference/cli/docker/compose/up/)
 
 拉取失败时，上面的脚本会停止，现有 TM 不会因此停止。新镜像已经应用后，TMM 不会自动恢复旧镜像；需要回退时，在同一个目录执行：
@@ -173,7 +177,7 @@ TMM 挂载 Docker socket，具有宿主机 Docker 管理权限，不开放管理
 `remove-old.sh` 为一次性移除及准备入口，`prepare-migration.py` 为它调用的固定辅助脚本；`tmm.py` 为运行中的 Token 检查程序，`Dockerfile` 和 `compose.yaml` 用于构建和启动。保留整个目录，不要单独拷贝移除脚本。
 
 ```bash
-python3 -m unittest -v test_tmm test_remove_old
+python3 -m unittest -v test_tmm test_remove_old test_update_tm
 bash -n remove-old.sh update-tm.sh
 docker compose --env-file .env.example config --quiet
 ```
