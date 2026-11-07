@@ -9,9 +9,10 @@ image_ref=未获取
 current_id=未知
 container_state=未知
 health=未知
+tm_name=tm
 summary() {
   local snapshot
-  snapshot=$(docker inspect --format '{{.Id}}|{{.Image}}|{{.State.Status}}|{{.RestartCount}}|{{.State.StartedAt}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' tm 2>/dev/null) || snapshot='未知|未知|不存在或无法读取|0|未知|未知'
+  snapshot=$(docker inspect --format '{{.Id}}|{{.Image}}|{{.State.Status}}|{{.RestartCount}}|{{.State.StartedAt}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$tm_name" 2>/dev/null) || snapshot='未知|未知|不存在或无法读取|0|未知|未知'
   IFS='|' read -r container_id current_id container_state restarts started health <<< "$snapshot"
 }
 report() {
@@ -32,7 +33,24 @@ stable_seconds=${TM_UPDATE_STABLE_SECONDS:-10}
   echo "等待时间和观察时间必须是正整数秒。"; exit 1;
 }
 
-image_ref=$(docker exec tmm printenv TM_IMAGE)
+# Compose service names remain stable even when older containers have generated names.
+manager_id=$(docker compose ps -a -q tmm)
+if [ -z "$manager_id" ]; then
+  echo "未找到当前 Compose 项目的 TMM 服务，尚未执行镜像更新。"
+  echo "请在 /root/tmm 执行 docker compose ps -a 检查部署状态。"
+  exit 1
+fi
+if [ "$(docker inspect --format '{{.State.Running}}' "$manager_id")" != true ]; then
+  echo "TMM 服务未运行，尚未执行镜像更新。"
+  echo "请先执行 docker compose start tmm，再重新运行本脚本。"
+  exit 1
+fi
+image_ref=$(docker exec "$manager_id" printenv TM_IMAGE)
+tm_name=$(docker exec "$manager_id" printenv TM_CONTAINER_NAME)
+if [ -z "$image_ref" ] || [ -z "$tm_name" ]; then
+  echo "TMM 缺少镜像或容器名称配置，尚未执行镜像更新。"
+  exit 1
+fi
 case "$image_ref" in
   sha256:*|*@sha256:*)
     echo "当前配置固定了镜像摘要，请先将 TM_IMAGE 改成可更新的镜像标签。"
@@ -40,7 +58,7 @@ case "$image_ref" in
     ;;
 esac
 
-old_id=$(docker inspect --format '{{.Image}}' tm)
+old_id=$(docker inspect --format '{{.Image}}' "$tm_name")
 architecture=$(docker image inspect --format '{{.Architecture}}' "$old_id")
 case "$architecture" in
   amd64) official=traffmonetizer/cli_v2:latest ;;

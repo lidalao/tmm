@@ -124,13 +124,10 @@ docker compose --profile managed down
 脚本已保存在仓库根目录 `update-tm.sh`。每台 VPS 复制执行：
 
 ```bash
-cd /root/tmm && \
-curl --fail --location --retry 3 \
-  --header 'Cache-Control: no-cache' \
-  https://raw.githubusercontent.com/lidalao/tmm/main/update-tm.sh \
-  --output update-tm.sh && \
-bash update-tm.sh
+cd /root/tmm && curl -fL -H 'Cache-Control: no-cache' https://raw.githubusercontent.com/lidalao/tmm/main/update-tm.sh --output update-tm.sh && bash update-tm.sh
 ```
+
+脚本通过 Compose 服务查找 TMM，兼容旧版的 `tm-stack-tmm-1` 和新版的 `tmm` 容器名称，无需重装或改名。若服务不存在或未运行，会提示检查或启动服务。
 
 以后再次更新时，重新执行这段命令即可。下载失败不会执行脚本。该脚本更新官方 TM 镜像，不重新安装 Agent，也不升级 TMM 程序本身。
 
@@ -146,7 +143,8 @@ bash update-tm.sh
 bash <<'ROLLBACK_TM_IMAGE'
 set -euo pipefail
 cd /root/tmm
-image_ref=$(docker exec tmm printenv TM_IMAGE)
+manager_id=$(docker compose ps -q tmm)
+image_ref=$(docker exec "$manager_id" printenv TM_IMAGE)
 docker image inspect tmm-tm:previous >/dev/null
 docker tag tmm-tm:previous "$image_ref"
 docker compose restart tmm

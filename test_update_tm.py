@@ -10,10 +10,16 @@ import os,sys
 from pathlib import Path
 a=sys.argv[1:]; mode=os.environ['UPDATE_CASE']
 if a[0]=='pull' and mode=='pull_fail': sys.exit(1)
-if a[0]=='exec': print('tmm-tm:local')
+if a[:2]==['compose','ps']:
+    if mode!='missing_manager': print('legacy-manager-id')
+elif a[0]=='exec':
+    assert a[1]=='legacy-manager-id', a
+    print('custom-tm' if a[-1]=='TM_CONTAINER_NAME' else 'tmm-tm:local')
 elif a[0]=='inspect':
-    if a[2]=='{{.Image}}': print('sha256:new' if mode=='unchanged' else 'sha256:old')
+    if a[2]=='{{.State.Running}}': print('false' if mode=='stopped_manager' else 'true')
+    elif a[2]=='{{.Image}}': print('sha256:new' if mode=='unchanged' else 'sha256:old')
     else:
+        assert a[-1]=='custom-tm', a
         p=Path(os.environ['UPDATE_COUNT']); n=int(p.read_text())+1 if p.exists() else 1; p.write_text(str(n))
         image='sha256:old' if mode=='wrong_image' else 'sha256:new'
         state='exited' if mode=='exited' else 'running'
@@ -43,6 +49,15 @@ class UpdateTests(unittest.TestCase):
                 self.assertIn(message,result.stdout)
                 self.assertIn('当前镜像 ID：sha256:new',result.stdout)
                 self.assertIn('容器状态：running',result.stdout)
+
+    def test_missing_or_stopped_manager_has_actionable_message(self):
+        for case, message in [('missing_manager', '未找到当前 Compose 项目的 TMM'),
+                              ('stopped_manager', 'TMM 服务未运行')]:
+            with self.subTest(case=case):
+                result = self.execute(case)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stdout)
+                self.assertNotIn('更新结果：成功', result.stdout)
 
     def test_wrong_image_exit_health_or_restart_loop_never_report_success(self):
         for case in ('wrong_image','exited','unhealthy','restarts','pull_fail'):
